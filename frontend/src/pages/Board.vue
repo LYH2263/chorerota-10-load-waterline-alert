@@ -5,6 +5,9 @@
     <div style="display:flex;gap:8px;margin:12px 0">
       <button @click="generate">生成周表</button>
       <button class="ghost" @click="load">刷新</button>
+      <button v-if="alerts.length" class="alert-link" @click="goAlerts">
+        负荷告警 {{ alerts.length }} →
+      </button>
     </div>
     <p v-if="err" class="err">{{ err }}</p>
     <div class="week-grid">
@@ -21,8 +24,11 @@
 </template>
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { api } from '../api'
+const router = useRouter()
 const assigns = ref([])
+const alerts = ref([])
 const days = [0,1,2,3,4,5,6]
 const err = ref('')
 const weekId = 1
@@ -32,6 +38,7 @@ async function load() {
   try {
     const b = await api('/weeks/' + weekId + '/board')
     assigns.value = b.assignments || []
+    alerts.value = b.alerts || []
   } catch (e) { err.value = e.message }
 }
 async function generate() {
@@ -39,5 +46,6 @@ async function generate() {
   try { await api('/weeks/' + weekId + '/generate', { method: 'POST', body: '{}' }); await load() }
   catch (e) { err.value = e.message }
 }
+function goAlerts() { router.push({ path: '/alerts', query: { week: weekId } }) }
 onMounted(load)
 </script>

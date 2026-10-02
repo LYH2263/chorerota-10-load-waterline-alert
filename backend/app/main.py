@@ -5,6 +5,9 @@ from pydantic import BaseModel
 from app import seed
 from app.db import connect
 from app.engines.rota import build_week_slots, swap_legal, apply_swap
+from app.modules.load_alert import rebuild_week_alerts, list_alerts, get_alert
+from app.modules.settings_store import get_all as settings_get_all, put as settings_put
+from app.modules.settings_store import SettingsError
 
 app = FastAPI(title="Chorerota", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -49,11 +52,12 @@ def week_board(week_id: int):
     assigns = [dict(r) for r in c.execute("SELECT * FROM assignments WHERE week_id=?", (week_id,))]
     members = {r["id"]: r["name"] for r in c.execute("SELECT id,name FROM members")}
     tasks = {r["id"]: r["title"] for r in c.execute("SELECT id,title FROM tasks")}
+    alerts = list_alerts(c, week_id=week_id)
     c.close()
     for a in assigns:
         a["member_name"] = members.get(a["member_id"], "?")
         a["task_title"] = tasks.get(a["task_id"], "?")
-    return {"week": dict(week), "assignments": assigns}
+    return {"week": dict(week), "assignments": assigns, "alerts": alerts}
 
 class GenBody(BaseModel):
     days: int = 7
@@ -71,8 +75,11 @@ def generate(week_id: int, body: GenBody = GenBody()):
         c.execute("INSERT INTO assignments(week_id,day,task_id,member_id) VALUES (?,?,?,?)",
                   (week_id, s["day"], s["task_id"], s["member_id"]))
     c.execute("UPDATE weeks SET status='ready' WHERE id=?", (week_id,))
+    # build/overwrite waterline alerts for this week from the new board,
+    # in the same transaction; snapshots are never rewritten afterwards
+    alerts = rebuild_week_alerts(c, week_id)
     c.commit(); c.close()
-    return {"count": len(slots), "slots": slots}
+    return {"count": len(slots), "slots": slots, "alerts": alerts}
 
 class SwapBody(BaseModel):
     a_day: int; a_task: int; b_day: int; b_task: int; note: str = ""
@@ -116,11 +123,24 @@ def confirm_swap(swap_id: int):
 
 @app.get("/api/settings")
 def get_settings():
-    c = connect(); rows = {r["key"]: r["value"] for r in c.execute("SELECT * FROM settings")}; c.close(); return rows
+    c = connect(); rows = settings_get_all(c); c.close(); return rows
 
 @app.put("/api/settings")
 def put_settings(body: dict):
     c = connect()
-    for k, v in body.items():
-        c.execute("INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, str(v)))
+    try:
+        settings_put(c, body)
+    except SettingsError as e:
+        c.close(); raise HTTPException(400, f"{e.key}: {e.reason}")
     c.commit(); c.close(); return {"ok": True}
+
+@app.get("/api/load-alerts")
+def load_alert_list(week_id: int | None = None):
+    c = connect(); rows = list_alerts(c, week_id=week_id); c.close(); return rows
+
+@app.get("/api/load-alerts/{alert_id}")
+def load_alert_detail(alert_id: int):
+    c = connect(); row = get_alert(c, alert_id); c.close()
+    if row is None:
+        raise HTTPException(404, "alert not found")
+    return row

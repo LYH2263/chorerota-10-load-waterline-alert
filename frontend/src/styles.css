@@ -49,3 +49,7 @@ input, select, textarea {
 .list { padding: 0; margin: 0; }
 .muted { color: var(--muted); font-size: 13px; }
 .err { color: #b33a2c; }
+button.alert-link { background: #b33a2c; }
+button.ghost.active { border-color: var(--coral); color: var(--coral); font-weight: 600; }
+.alert-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.alert-row:hover .chip { box-shadow: 0 0 0 1px var(--coral); }
