@@ -7,6 +7,9 @@
       <button class="ghost" @click="load">刷新</button>
     </div>
     <p v-if="err" class="err">{{ err }}</p>
+    <p v-if="alerts.length" style="margin:0 0 8px">
+      <router-link class="chip coral" :to="'/alerts?week_id=' + weekId">负荷告警 {{ alerts.length }} 单 →</router-link>
+    </p>
     <div class="week-grid">
       <article v-for="d in days" :key="d" class="week-card">
         <header>Day {{ d }}</header>
@@ -23,6 +26,7 @@
 import { ref, onMounted } from 'vue'
 import { api } from '../api'
 const assigns = ref([])
+const alerts = ref([])
 const days = [0,1,2,3,4,5,6]
 const err = ref('')
 const weekId = 1
@@ -32,6 +36,7 @@ async function load() {
   try {
     const b = await api('/weeks/' + weekId + '/board')
     assigns.value = b.assignments || []
+    alerts.value = await api('/load-alerts?week_id=' + weekId)
   } catch (e) { err.value = e.message }
 }
 async function generate() {

@@ -5,6 +5,9 @@ from pydantic import BaseModel
 from app import seed
 from app.db import connect
 from app.engines.rota import build_week_slots, swap_legal, apply_swap
+from app.modules.load_alert import builder as alert_builder
+from app.modules.load_alert import repository as alert_repo
+from app.modules.load_alert import settings as alert_settings
 
 app = FastAPI(title="Chorerota", version="0.1.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -71,8 +74,9 @@ def generate(week_id: int, body: GenBody = GenBody()):
         c.execute("INSERT INTO assignments(week_id,day,task_id,member_id) VALUES (?,?,?,?)",
                   (week_id, s["day"], s["task_id"], s["member_id"]))
     c.execute("UPDATE weeks SET status='ready' WHERE id=?", (week_id,))
+    alerts = alert_builder.rebuild_for_week(c, week_id, alert_settings.get_waterline(c))
     c.commit(); c.close()
-    return {"count": len(slots), "slots": slots}
+    return {"count": len(slots), "slots": slots, "alerts": len(alerts)}
 
 class SwapBody(BaseModel):
     a_day: int; a_task: int; b_day: int; b_task: int; note: str = ""
@@ -121,6 +125,33 @@ def get_settings():
 @app.put("/api/settings")
 def put_settings(body: dict):
     c = connect()
-    for k, v in body.items():
-        c.execute("INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, str(v)))
-    c.commit(); c.close(); return {"ok": True}
+    try:
+        if "load_waterline" in body:
+            try:
+                alert_settings.set_waterline(c, body["load_waterline"])
+            except ValueError:
+                raise HTTPException(400, "load_waterline must be an integer > 0")
+        for k, v in body.items():
+            if k == "load_waterline":
+                continue  # 已在校验通过时落库
+            c.execute("INSERT INTO settings(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, str(v)))
+        c.commit()
+    finally:
+        c.close()
+    return {"ok": True}
+
+@app.get("/api/load-alerts")
+def list_load_alerts(week_id: int | None = None):
+    c = connect()
+    rows = alert_repo.list_alerts(c, week_id)
+    c.close()
+    return rows
+
+@app.get("/api/load-alerts/{alert_id}")
+def get_load_alert(alert_id: int):
+    c = connect()
+    alert = alert_repo.get_alert(c, alert_id)
+    c.close()
+    if not alert:
+        raise HTTPException(404, "load alert not found")
+    return alert
